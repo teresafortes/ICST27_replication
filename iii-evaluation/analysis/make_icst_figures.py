@@ -74,6 +74,8 @@ def fig_fidelity(r1, out, subset, demo):
     r = r1[r1.item_id.isin(items)].copy()
     cat = np.where(~r["pass"].astype(bool), "fail", r["fidelity"].fillna("other"))
     r["cat"] = pd.Series(cat, index=r.index).replace({"neither": "other", "undetermined": "other"})
+    # an agent repair that restores the clause but is not a clean pass is not faithful (as in the tables)
+    r.loc[r["cat"].isin(["exact", "equivalent"]) & ~r["faithful_pass"].astype(bool), "cat"] = "other"
     bars = []                                   # (key, mode, shares)
     for key in st.MODELS:
         for mode in st.MODES:
@@ -105,19 +107,20 @@ def fig_fidelity(r1, out, subset, demo):
                 continue
             ax.barh(yy, w, left=left, height=0.78, color=color,
                     edgecolor="white" if c != "fail" else "#CFCFCF", linewidth=0.5)
-            if c in ("exact", "weaker") and w >= 0.07:
-                ax.text(left + w / 2, yy, f"{100 * w:.0f}", ha="center", va="center", fontsize=6.3,
-                        color="white", weight="bold")
             left += w
+            if c == "equivalent":       # label the faithful share (exact + equivalent) at its end
+                ax.text(left - 0.004, yy, f"{100 * left:.1f}", ha="right", va="center", fontsize=6.3,
+                        color="#0E3B34", weight="bold")
         passed = 1 - float(shares.get("fail", 0.0))
-        ax.plot([passed, passed], [yy - 0.39, yy + 0.39], color="#333333", lw=0.8)
+        ax.plot([passed, passed], [yy - 0.44, yy + 0.44], color="#222222", lw=1.4)
     ax.set_yticks(ys)
     ax.set_yticklabels([st.MODE_NAME[m] for k, m, _ in bars])   # the model name is under the logo
     ax.invert_yaxis()
-    ax.set_xlim(0, 1)
-    ax.set_xticks(np.linspace(0, 1, 6))
-    ax.set_xticklabels([f"{int(x)}%" for x in np.linspace(0, 100, 6)])
-    ax.set_xlabel("Share of repairs (the black tick marks the pass rate)")
+    x0 = 0.70                    # the exact segment always exceeds 70%; zoom on the rest
+    ax.set_xlim(x0, 1)
+    ax.set_xticks(np.arange(x0, 1.001, 0.05))
+    ax.set_xticklabels([f"{round(100 * x)}%" for x in np.arange(x0, 1.001, 0.05)])
+    ax.set_xlabel("Share of repairs (axis starts at 70%; black tick = pass rate)")
     ax.spines["left"].set_visible(False)
     ax.tick_params(axis="y", length=0, pad=4)
     # logo per model group, left of the tick labels
@@ -126,6 +129,7 @@ def fig_fidelity(r1, out, subset, demo):
         st.add_logo(ax, key, (-0.255, yy - 0.25), zoom=logo_zoom(14), xycoords=("axes fraction", "data"))
         ax.text(-0.255, yy + 0.55, st.NAME[key], transform=ax.get_yaxis_transform(), ha="center", va="center",
                 fontsize=5.8, color="#444444")
+    ax.text(x0 + 0.004, ys[0] - 0.62, "faithful %", ha="left", va="bottom", fontsize=5.8, color="#0E3B34")
     handles = [Patch(facecolor=c, edgecolor="#CFCFCF" if k == "fail" else c, label=l) for k, l, c in st.FIDELITY]
     ax.legend(handles=handles, ncol=3, loc="lower center", bbox_to_anchor=(0.42, 1.0), frameon=False,
               handlelength=1.0, columnspacing=0.9, handletextpad=0.4)
@@ -156,21 +160,31 @@ def fig_pass_faithful(r1, out, subset, demo):
     if not pts:
         print("  fig_pass_faithful: no data, skipped")
         return
-    lo, hi = 85, 101
+    lo, hi = 85, 101.6
     fig, ax = plt.subplots(figsize=(COL_W, 2.3), dpi=DPI)
     ax.plot([lo, hi], [lo, hi], color="#BBBBBB", lw=0.8, zorder=1)
-    ax.text(96.2, 96.6, "pass = faithful", rotation=45, rotation_mode="anchor", transform_rotates_text=True,
+    ax.text(85.6, 86.0, "pass = faithful", rotation=45, rotation_mode="anchor", transform_rotates_text=True,
             fontsize=6, color="#888888", ha="left", va="bottom")
     for key in st.MODELS:
-        path = [pts[(key, m)] for m in st.MODES if (key, m) in pts]
-        if len(path) > 1:
-            xs, ys = zip(*path)
-            ax.plot(xs, ys, color=st.COLOR[key], lw=0.8, alpha=0.45, zorder=2)
+        if (key, "single_shot") in pts:          # each verifier mode is compared with single-shot only
+            for mode in ("iterative", "agentic"):
+                if (key, mode) in pts:
+                    ax.annotate("", xy=pts[(key, mode)], xytext=pts[(key, "single_shot")],
+                                arrowprops=dict(arrowstyle="-|>,head_length=0.35,head_width=0.18",
+                                                color=st.COLOR[key], alpha=0.5, lw=0.8,
+                                                shrinkA=4, shrinkB=4), zorder=2)
         for mode in st.MODES:
             if (key, mode) in pts:
                 x, y = pts[(key, mode)]
                 ax.plot(x, y, "o", ms=6, mfc=tint(st.COLOR[key], MODE_SHADE[mode]),
                         mec=st.COLOR[key], mew=0.9, zorder=3)
+    opus = "claude-opus-5-5"            # name the modes once, on Opus; the shading carries them elsewhere
+    for mode, (dx, dy, ha, va) in {"single_shot": (0, -7, "center", "top"), "iterative": (0, 6, "center", "bottom"),
+                                   "agentic": (0, 6, "center", "bottom")}.items():
+        if (opus, mode) in pts:
+            ax.annotate({"single_shot": "single-shot", "iterative": "iterative", "agentic": "agent"}[mode],
+                        pts[(opus, mode)], xytext=(dx, dy), textcoords="offset points", ha=ha, va=va,
+                        fontsize=6, color=st.COLOR[opus])
     if (st.CC_KEY, "agentic") in pts:
         x, y = pts[(st.CC_KEY, "agentic")]
         ax.plot(x, y, "s", ms=5.5, mfc=st.COLOR["claude-opus-5-5"], mec="#333333", mew=0.9, zorder=3)
@@ -212,17 +226,17 @@ def fig_iterative(tdir, out, demo):
         if g.empty:
             continue
         ax.plot(g.attempt, 100 * g.cumulative_pass, "-o", color=st.COLOR[key], ms=3.2, lw=1.4, zorder=3)
+        last = g.iloc[-1]
+        ax.text(last.attempt + 0.15, 100 * last.cumulative_pass, f"{st.NAME[key]} ({100 * last.cumulative_pass:.1f})",
+                ha="left", va="center", fontsize=6.3, color=st.COLOR[key])
     ax.set_xticks(range(1, kmax + 1))
-    ax.set_xlim(0.7, kmax + 0.3)
+    ax.set_xlim(0.7, kmax + 1.9)
+    ax.spines["bottom"].set_bounds(1, kmax)
     ax.set_ylim(80, 101)
     ax.set_yticks(range(80, 101, 5))
     ax.set_xlabel("Attempt")
     ax.set_ylabel("Cumulative pass rate (%)")
     ax.grid(axis="y")
-    keys = [k for k in st.MODELS if ((c.condition == "it_main") & (c.model == k)).any()]
-    ax.legend([st.LogoHandle(k, line=True) for k in keys], [st.NAME[k] for k in keys],
-              handler_map=st.logo_handler_map(), loc="lower right", bbox_to_anchor=(1.0, 0.02), frameon=False, handlelength=2.6,
-              handletextpad=0.5, borderaxespad=0.2)
     save(fig, out, "fig_iterative", demo)
 
 
@@ -297,31 +311,34 @@ def fig_diag_repair(r1, tdir, out, subset, demo):
     r = r1[r1.item_id.isin(items)]
     pts = []
     for key in st.MODELS:
-        for mode in st.MODES:
+        for mode in ("single_shot", "iterative"):     # every agent run passes, so agents show no gap
             g = rows_for(r, key, mode)
             if g.empty:
                 continue
             col = "spec_correct" if mode == "single_shot" else "spec_correct_last"
             ok = g[col].astype(bool)
-            pts.append((key, mode, g.loc[ok, "pass"].mean(), g.loc[~ok, "pass"].mean(), int((~ok).sum())))
+            pts.append((key, mode, g.loc[ok, "pass"].mean(), g.loc[~ok, "pass"].mean(), int((~ok).sum()),
+                        int(g.loc[~ok, "pass"].astype(bool).sum())))
     if not pts:
         print("  fig_diag_repair: no data, skipped")
         return
     fig, ax = plt.subplots(figsize=(COL_W, 0.24 * len(pts) + 0.8), dpi=DPI)
     y, ys, prev = 0.0, [], None
-    for key, mode, p_ok, p_bad, n_bad in pts:
+    for key, mode, p_ok, p_bad, n_bad, k_bad in pts:
         if prev is not None and key != prev:
             y += 0.5
         ys.append(y)
-        ax.plot([100 * p_bad, 100 * p_ok], [y, y], color="#C9C9C9", lw=2.2, solid_capstyle="round", zorder=1)
-        ax.plot(100 * p_bad, y, "o", ms=4.5, color="white", markeredgecolor=st.COLOR[key], mew=1.2, zorder=2)
+        if n_bad:
+            ax.plot([100 * p_bad, 100 * p_ok], [y, y], color="#C9C9C9", lw=2.2, solid_capstyle="round", zorder=1)
+            ax.plot(100 * p_bad, y, "o", ms=4.5, color="white", markeredgecolor=st.COLOR[key], mew=1.2, zorder=2)
         ax.plot(100 * p_ok, y, "o", ms=4.5, color=st.COLOR[key], zorder=3)
-        # few items are misdiagnosed, so give their count next to the hollow point
+        # few items are misdiagnosed: say how many of them still passed
+        lab = f"{k_bad}/{n_bad} pass" if n_bad else "no wrong diagnosis"
         x_lab = 100 * (p_bad if n_bad else p_ok)
-        if x_lab < 15:      # near 0 the label would hit the axis labels: put it above the line instead
-            ax.text(x_lab + 2, y - 0.18, f"{n_bad} wrong", ha="left", va="bottom", fontsize=6, color="#666666")
+        if n_bad and x_lab < 15:   # near 0 the label would hit the axis labels: put it right of the point
+            ax.text(x_lab + 3, y - 0.12, lab, ha="left", va="bottom", fontsize=6, color="#666666")
         else:
-            ax.text(x_lab - 3, y, f"{n_bad} wrong", ha="right", va="center", fontsize=6, color="#666666")
+            ax.text(x_lab - 3, y, lab, ha="right", va="center", fontsize=6, color="#666666")
         y += 1
         prev = key
     ys = np.array(ys)
@@ -331,15 +348,16 @@ def fig_diag_repair(r1, tdir, out, subset, demo):
     ax.tick_params(axis="y", length=0, pad=4)
     ax.spines["left"].set_visible(False)
     ax.set_xlabel("Pass rate (%)")
+    ax.set_xlim(-4, 104)
     ax.grid(axis="x")
     for key in dict.fromkeys(k for k, *_ in pts):
         yy = ys[[i for i, p in enumerate(pts) if p[0] == key]].mean()
-        st.add_logo(ax, key, (-0.225, yy - 0.25), zoom=logo_zoom(14), xycoords=("axes fraction", "data"))
-        ax.text(-0.225, yy + 0.55, st.NAME[key], transform=ax.get_yaxis_transform(), ha="center", va="center",
+        st.add_logo(ax, key, (-0.36, yy - 0.15), zoom=logo_zoom(14), xycoords=("axes fraction", "data"))
+        ax.text(-0.36, yy + 0.5, st.NAME[key], transform=ax.get_yaxis_transform(), ha="center", va="center",
                 fontsize=5.8, color="#444444")
     handles = [Line2D([], [], marker="o", ls="", color="#666666", ms=4.5),
                Line2D([], [], marker="o", ls="", color="white", markeredgecolor="#666666", ms=4.5)]
-    ax.legend(handles, ["element diagnosed correctly", "diagnosed incorrectly"], ncol=1, loc="lower left",
+    ax.legend(handles, ["element diagnosed correctly", "element diagnosed incorrectly"], ncol=1, loc="lower left",
               bbox_to_anchor=(-0.02, 1.0), frameon=False, handletextpad=0.3, labelspacing=0.25)
     save(fig, out, "fig_diag_repair", demo)
 

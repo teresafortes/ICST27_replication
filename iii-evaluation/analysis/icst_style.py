@@ -35,7 +35,7 @@ FIDELITY = [
     ("equivalent",   "Equivalent",   "#6DBFAE"),
     ("weaker",       "Weaker",       "#D1495B"),
     ("stronger",     "Stronger",     "#F0B44C"),
-    ("other",        "Incomparable / undetermined", "#B9B4C7"),
+    ("other",        "Other",        "#B9B4C7"),
     ("fail",         "Does not verify", "#EDEDED"),
 ]
 
